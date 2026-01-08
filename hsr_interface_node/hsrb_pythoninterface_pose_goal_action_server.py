@@ -82,146 +82,93 @@ class HsrbPythonInterfacePoseGoalActionServer(Node):
             # クォータニオンをオイラー角に変換
             self.roll, self.pitch, self.yaw = euler_from_quaternion(quat)
 
-            with hsrb_interface.Robot() as robot:
-                # APIを使用するための準備
-                #obot=hsrb_interface.Robot()
-                whole_body = robot.get('whole_body')
-                collision_world = robot.get("global_collision_world")
-                gripper = robot.get('gripper', robot.Items.END_EFFECTOR)
-                wrist_wrench = robot.get('wrist_wrench', robot.Items.FORCE_TORQUE)
+            try:
+                with hsrb_interface.Robot() as robot:
+                    # APIを使用するための準備
+                    #robot=hsrb_interface.Robot()
+                    whole_body = robot.get('whole_body')
+                    collision_world = robot.get("global_collision_world")
+                    gripper = robot.get('gripper', robot.Items.END_EFFECTOR)
+                    wrist_wrench = robot.get('wrist_wrench', robot.Items.FORCE_TORQUE)
 
-                # TODO 動かす前にインターフェイスのnutural()で初期姿勢に戻す、ちゃんと使うかどうかを選択できるようにする
+                    whole_body.collision_world = None  # 衝突回避を無効化
+                    #whole_body.looking_hand_constraint = True  # 動作後に手先を見続ける
+                    pose = geometry.pose(x=position[0], y=position[1], z=position[2], ei=self.roll, ej=self.pitch, ek=self.yaw)
+                    self.get_logger().info(f'目標位置: {position}, 目標姿勢: {quat}')
 
-                whole_body.collision_world = None  # 衝突回避を有効化
-                #whole_body.looking_hand_constraint = True  # 動作後に手先を見続ける
-                pose = geometry.pose(x=position[0], y=position[1], z=position[2], ei=self.roll, ej=self.pitch, ek=self.yaw)
-                self.get_logger().info(f'目標位置: {position}, 目標姿勢: {quat}')
-
-                if goal.force_torque is True:
-                    time.sleep(1.0)
-                    pre_force_torque = wrist_wrench._get_raw_wrench()
-                    self.get_logger().info('把持前の軸の力[N]を取得')
-                    pre_forces, pre_torques = pre_force_torque
-                    '''
-                    # ここからはテスト段階
-                    pre_forces = [0.0, 0.0, 0.0]
-                    for i in range(10):
+                    # 把持前の力覚センサの値を取得
+                    if goal.force_torque is True:
+                        time.sleep(1.0)
                         pre_force_torque = wrist_wrench._get_raw_wrench()
-                        pre_forces_temp, pre_torques = pre_force_torque
-
-                        pre_forces[0] += pre_forces_temp[0]
-                        pre_forces[1] += pre_forces_temp[1]
-                        pre_forces[2] += pre_forces_temp[2]
-                        time.sleep(0.5)
-
-                    pre_forces = [x / 10 for x in pre_forces]
-                    '''
-                    
-
-                MAX_RETRIES = 5  # リトライ回数
-                for attempt in range(1, MAX_RETRIES + 1):
-                    try:
+                        self.get_logger().info('把持前の軸の力[N]を取得')
+                        pre_forces, pre_torques = pre_force_torque
+                        
+                    # 動作していないかの確認
+                    if whole_body.is_moving():
                         whole_body.cancel_goal()
-                        time.sleep(1.0)  # 安全のために追加
-                        whole_body.move_end_effector_pose(pose, ref_frame_id='base_link')
-                        whole_body.wait_goal()  # ブロッキング
-                        self.get_logger().info(f"移動成功: {attempt}回目")
-                        break  # 成功したらループを抜ける
-                    except hsrb_interface.exceptions.FollowTrajectoryError as e:
-                        self.get_logger().warn(f"移動失敗: {attempt}回目, エラー: {e}")
-                        if attempt == MAX_RETRIES:
-                            self.get_logger().error("最大リトライ回数に到達、移動中止")
-                            goal_handle.abort()
-                            result.answer = 'NG'
-                        else:
-                            self.get_logger().info("再試行します…")
-
-
-                '''
-                self.get_logger().info(f'目標位置: {position}, 目標姿勢: {quat}')
-                whole_body.move_end_effector_pose(pose, ref_frame_id='base_link')
-
-                #ブロッキング処理
-                whole_body.wait_goal()
-                self.get_logger().info('移動完了')
-                #collision_world.remove_all(timeout=1.0)
-                #self.get_logger().info('衝突オブジェクトを削除')
-                '''
-
-                # 力指定グリッパを使用する場合
-                if goal.gripper is True:
-                    gripper.apply_force(0.9)#, delicate=True)  # 1.0Nで把持
-                    self.get_logger().info('グリッパ把持指令実行')
-                
-                # 物体は把持後に初期姿勢に戻るか
-                if goal.neutral is True:
-                    whole_body.move_to_neutral()  # 初期姿勢に戻る
-                    self.get_logger().info('初期姿勢に戻る')
-                    whole_body.wait_goal()  # ブロッキング
-
-
-                # TODO　インターフェイスを使って6軸トルクのＺ軸の重さを取り出しアンサーに返す
-                if goal.force_torque is True:
-                    time.sleep(2.0)
-                    post_force_torque = wrist_wrench._get_raw_wrench()
-                    post_forces, post_torques = post_force_torque
-
-                    '''
-                    # ここからはテスト段階
-                    post_forces = [0.0, 0.0, 0.0]
-                    for i in range(10):
-                        post_force_torque = wrist_wrench._get_raw_wrench()
-                        post_forces_temp, pre_torques = post_force_torque
-
-                        post_forces[0] += post_forces_temp[0]
-                        post_forces[1] += post_forces_temp[1]
-                        post_forces[2] += post_forces_temp[2]
                         time.sleep(0.5)
 
-                    post_forces = [x / 10 for x in post_forces]
-                    '''
+                    time.sleep(1.0)  # 安全のために追加
+                    whole_body.move_end_effector_pose(pose, ref_frame_id='odom')  # マニピュレーション実行
+                    whole_body.wait_goal()  # ブロッキング(マニピュレーションが完了するまで)
+                    self.get_logger().info(f"移動成功")
+
+                    # 力指定グリッパを使用する場合
+                    if goal.gripper is True:
+                        gripper.apply_force(0.9)#, delicate=True)  # 1.0Nで把持
+                        self.get_logger().info('グリッパ把持指令実行')
                     
+                    # 物体は把持後に初期姿勢に戻るか
+                    if goal.neutral is True:
+                        whole_body.move_to_neutral()  # 初期姿勢に戻る
+                        self.get_logger().info('初期姿勢に戻る')
+                        whole_body.wait_goal()  # ブロッキング
 
-                    '''
-                    #  重力軸（Z軸）の差分だけを見る
-                    pre_fz = pre_forces[2]
-                    post_fz = post_forces[2]
-                    diff_fz = post_fz - pre_fz
-                    self.get_logger().info(f'持つ前: {pre_fz}持ったあと：{post_fz}')
 
-                    # 差が小さすぎる場合は「持ってない」と判定
-                    if abs(diff_fz) < 0.1:   # 0.3N ≒ 30g (調整可)
-                        weight = 0.0
-                    else:
-                        weight = round(diff_fz / 9.81 * 1000, 1)
+                    # 把持後の力覚センサの値を取得して、重量を推定する
+                    if goal.force_torque is True:
+                        time.sleep(2.0)
+                        post_force_torque = wrist_wrench._get_raw_wrench()
+                        post_forces, post_torques = post_force_torque                        
+                        force_difference = self.compute_difference(pre_forces, post_forces)
 
-                    result.force_torque_answer = [weight]
-                    self.get_logger().info(f'推定重量: {weight} [g]')
-                    '''
-                    
+                        weight = round(force_difference / 9.81 * 1000, 1)
+                        force_torque_list=[weight]
+                        result.force_torque_answer = force_torque_list
+                        self.get_logger().info(f'持つ前: {pre_force_torque}持ったあと：{post_force_torque}')
+                        self.get_logger().info(f'重さは{force_torque_list}')
+                        
 
-                    
-                    force_difference = self.compute_difference(pre_forces, post_forces)
+                    # ロボットが動いている場合はキャンセル
+                    if whole_body.is_moving():
+                        whole_body.cancel_goal()
+                        self.get_logger().info('実行中のアクションをキャンセルしました')
 
-                    weight = round(force_difference / 9.81 * 1000, 1)
-                    force_torque_list=[weight]
-                    result.force_torque_answer = force_torque_list
-                    self.get_logger().info(f'持つ前: {pre_force_torque}持ったあと：{post_force_torque}')
-                    self.get_logger().info(f'重さは{force_torque_list}')
-                    
+                    #robot.close()  # ロボットとの接続を切る
 
-                # ロボットが動いている場合はキャンセル
-                if whole_body.is_moving():
-                    whole_body.cancel_goal()
-                    self.get_logger().info('実行中のアクションをキャンセルしました')
+                goal_handle.succeed()
+                result.answer = 'OK'
+                return result
 
-                #robot.close()  # ロボットとの接続を切る
+            except hsrb_interface.exceptions.FollowTrajectoryError as e:
+                    self.get_logger().warn(f"移動失敗: エラー: {e}")
+                    goal_handle.abort()
+                    result.answer = 'NG'
+                    return result
+            except AttributeError as e:
+                if 'joint_names' in str(e):
+                    self.get_logger().error('NoneType.joint_names')
+                    goal_handle.abort()
+                    result.answer = 'NG'
+                    return result
+            except Exception as e:
+                self.get_logger().error(f'予期しない例外: {e}')
+                goal_handle.abort()
+                result.answer = 'NG'
+                return result
 
-            goal_handle.succeed()
-            result.answer = 'OK'
-            return result
-        
     
+    # ベクトル差分を計算
     def compute_difference(self, pre_data_list, post_data_list):
         if (len(pre_data_list) != len(post_data_list)):
             raise ValueError('Argument lists differ in length')
@@ -245,16 +192,6 @@ def main(args=None):
         executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
-
-    '''
-    rclpy.init(args=args)
-    node =  HsrbPythonInterfacePoseGoalActionServer()
-    try:
-        rclpy.spin(node)
-    except KeyboardInterrupt:
-        pass
-    rclpy.try_shutdown()
-    '''
 
 if __name__ == '__main__':
     main()
